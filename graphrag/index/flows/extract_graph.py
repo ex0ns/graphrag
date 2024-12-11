@@ -13,29 +13,22 @@ from datashaper import (
 )
 
 from graphrag.cache.pipeline_cache import PipelineCache
-from graphrag.index.operations.create_graph import create_graph
 from graphrag.index.operations.extract_entities import extract_entities
-from graphrag.index.operations.snapshot import snapshot
-from graphrag.index.operations.snapshot_graphml import snapshot_graphml
 from graphrag.index.operations.summarize_descriptions import (
     summarize_descriptions,
 )
-from graphrag.storage.pipeline_storage import PipelineStorage
 
 
 async def extract_graph(
     text_units: pd.DataFrame,
     callbacks: VerbCallbacks,
     cache: PipelineCache,
-    storage: PipelineStorage,
     extraction_strategy: dict[str, Any] | None = None,
     extraction_num_threads: int = 4,
     extraction_async_mode: AsyncType = AsyncType.AsyncIO,
     entity_types: list[str] | None = None,
     summarization_strategy: dict[str, Any] | None = None,
     summarization_num_threads: int = 4,
-    snapshot_graphml_enabled: bool = False,
-    snapshot_transient_enabled: bool = False,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """All the steps to create the base entity graph."""
     entities, relationships = await extract_entities(
@@ -62,29 +55,6 @@ async def extract_graph(
     base_relationship_edges = _prep_edges(relationships, relationship_summaries)
 
     base_entity_nodes = _prep_nodes(entities, entity_summaries)
-
-    if snapshot_graphml_enabled:
-        # todo: extract graphs at each level, and add in meta like descriptions
-        graph = create_graph(base_relationship_edges)
-        await snapshot_graphml(
-            graph,
-            name="graph",
-            storage=storage,
-        )
-
-    if snapshot_transient_enabled:
-        await snapshot(
-            base_entity_nodes,
-            name="base_entity_nodes",
-            storage=storage,
-            formats=["parquet"],
-        )
-        await snapshot(
-            base_relationship_edges,
-            name="base_relationship_edges",
-            storage=storage,
-            formats=["parquet"],
-        )
 
     return (base_entity_nodes, base_relationship_edges)
 
