@@ -49,7 +49,7 @@ async def extract_entities(
     async_mode: AsyncType = AsyncType.AsyncIO,
     entity_types=DEFAULT_ENTITY_TYPES,
     num_threads: int = 4,
-) -> tuple[list[pd.DataFrame], list[pd.DataFrame]]:
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
     Extract entities from a piece of text.
 
@@ -143,6 +143,8 @@ async def extract_entities(
         num_threads=num_threads,
     )
 
+    # we'll have a result for each text unit
+    # turn into a dataframe and then merge into one each for entities and relationships
     entity_dfs = []
     relationship_dfs = []
     for result in results:
@@ -150,7 +152,10 @@ async def extract_entities(
             entity_dfs.append(pd.DataFrame(result[0]))
             relationship_dfs.append(pd.DataFrame(result[1]))
 
-    return (entity_dfs, relationship_dfs)
+    merged_entities = _merge_entities(entity_dfs)
+    merged_relationships = _merge_relationships(relationship_dfs)
+
+    return (merged_entities, merged_relationships)
 
 
 def _load_strategy(strategy_type: ExtractEntityStrategyType) -> EntityExtractStrategy:
@@ -174,3 +179,24 @@ def _load_strategy(strategy_type: ExtractEntityStrategyType) -> EntityExtractStr
         case _:
             msg = f"Unknown strategy: {strategy_type}"
             raise ValueError(msg)
+
+
+def _merge_entities(entity_dfs) -> pd.DataFrame:
+    # collapse the entities with a list of all descriptions and sources
+    all_entities = pd.concat(entity_dfs, ignore_index=True)
+    return (
+        all_entities.groupby(["name", "type"], sort=False)
+        .agg({"description": list, "source_id": list})
+        .reset_index()
+    )
+
+
+def _merge_relationships(relationship_dfs) -> pd.DataFrame:
+    # collapse the relationships with a list of all descriptions and sources
+    # we'll also sum the edge weights
+    all_relationships = pd.concat(relationship_dfs, ignore_index=False)
+    return (
+        all_relationships.groupby(["source", "target"], sort=False)
+        .agg({"description": list, "source_id": list, "weight": "sum"})
+        .reset_index()
+    )

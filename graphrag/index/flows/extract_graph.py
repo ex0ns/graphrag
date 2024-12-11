@@ -6,7 +6,6 @@
 from typing import Any
 from uuid import uuid4
 
-import networkx as nx
 import pandas as pd
 from datashaper import (
     AsyncType,
@@ -39,8 +38,7 @@ async def extract_graph(
     snapshot_transient_enabled: bool = False,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """All the steps to create the base entity graph."""
-    # this returns a graph for each text unit, to be merged later
-    entity_dfs, relationship_dfs = await extract_entities(
+    entities, relationships = await extract_entities(
         text_units,
         callbacks,
         cache,
@@ -52,26 +50,22 @@ async def extract_graph(
         num_threads=extraction_num_threads,
     )
 
-    merged_entities = _merge_entities(entity_dfs)
-    merged_relationships = _merge_relationships(relationship_dfs)
-
     entity_summaries, relationship_summaries = await summarize_descriptions(
-        merged_entities,
-        merged_relationships,
+        entities,
+        relationships,
         callbacks,
         cache,
         strategy=summarization_strategy,
         num_threads=summarization_num_threads,
     )
 
-    base_relationship_edges = _prep_edges(merged_relationships, relationship_summaries)
+    base_relationship_edges = _prep_edges(relationships, relationship_summaries)
 
-    graph = create_graph(base_relationship_edges)
-
-    base_entity_nodes = _prep_nodes(merged_entities, entity_summaries, graph)
+    base_entity_nodes = _prep_nodes(entities, entity_summaries)
 
     if snapshot_graphml_enabled:
         # todo: extract graphs at each level, and add in meta like descriptions
+        graph = create_graph(base_relationship_edges)
         await snapshot_graphml(
             graph,
             name="graph",
@@ -95,30 +89,10 @@ async def extract_graph(
     return (base_entity_nodes, base_relationship_edges)
 
 
-def _merge_entities(entity_dfs) -> pd.DataFrame:
-    all_entities = pd.concat(entity_dfs, ignore_index=True)
-    return (
-        all_entities.groupby(["name", "type"], sort=False)
-        .agg({"description": list, "source_id": list})
-        .reset_index()
-    )
-
-
-def _merge_relationships(relationship_dfs) -> pd.DataFrame:
-    all_relationships = pd.concat(relationship_dfs, ignore_index=False)
-    return (
-        all_relationships.groupby(["source", "target"], sort=False)
-        .agg({"description": list, "source_id": list, "weight": "sum"})
-        .reset_index()
-    )
-
-
-def _prep_nodes(entities, summaries, graph) -> pd.DataFrame:
-    degrees_df = _compute_degree(graph)
+def _prep_nodes(entities, summaries) -> pd.DataFrame:
     entities.drop(columns=["description"], inplace=True)
     nodes = (
         entities.merge(summaries, on="name", how="left")
-        .merge(degrees_df, on="name")
         .drop_duplicates(subset="name")
         .rename(columns={"name": "title", "source_id": "text_unit_ids"})
     )
@@ -138,10 +112,3 @@ def _prep_edges(relationships, summaries) -> pd.DataFrame:
     edges["human_readable_id"] = edges.index
     edges["id"] = edges["human_readable_id"].apply(lambda _x: str(uuid4()))
     return edges
-
-
-def _compute_degree(graph: nx.Graph) -> pd.DataFrame:
-    return pd.DataFrame([
-        {"name": node, "degree": int(degree)}
-        for node, degree in graph.degree  # type: ignore
-    ])
